@@ -20,8 +20,8 @@ class NormalizeCommaPrompt:
     CATEGORY = "Yeol/Prompt"
 
     def normalize(self, prompt: str):
-        parts = [part.strip() for part in prompt.split(",")]
-        return (", ".join(parts),)
+        normalized_parts = (part.strip() for part in prompt.split(","))
+        return (", ".join(normalized_parts),)
 
 
 NODE_CLASS_MAPPINGS = {
