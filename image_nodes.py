@@ -1,6 +1,8 @@
 \
 import io
 import json
+from datetime import datetime, timezone
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
 import numpy as np
@@ -338,16 +340,17 @@ class PostWebPApi:
         return {
             "required": {
                 "webp": ("WEBP",),
-                "url": (
+                "api_url": (
                     "STRING",
                     {
-                        "default": "https://example.com/upload",
+                        "default": "http://127.0.0.1:2283/api/assets",
                     },
                 ),
-                "image_field_name": (
+                "api_key": ("STRING", {"default": ""}),
+                "device_id": (
                     "STRING",
                     {
-                        "default": "image",
+                        "default": "comfyui-kstr-nodes",
                     },
                 ),
                 "filename_prefix_override": (
@@ -356,20 +359,7 @@ class PostWebPApi:
                         "default": "",
                     },
                 ),
-                "headers_json": (
-                    "STRING",
-                    {
-                        "default": "{}",
-                        "multiline": True,
-                    },
-                ),
-                "form_fields_json": (
-                    "STRING",
-                    {
-                        "default": "{}",
-                        "multiline": True,
-                    },
-                ),
+                "is_favorite": ("BOOLEAN", {"default": False}),
                 "timeout_seconds": (
                     "INT",
                     {
@@ -394,35 +384,28 @@ class PostWebPApi:
     def post(
         self,
         webp,
-        url: str,
-        image_field_name: str,
+        api_url: str,
+        api_key: str,
+        device_id: str,
         filename_prefix_override: str,
-        headers_json: str,
-        form_fields_json: str,
+        is_favorite: bool,
         timeout_seconds: int,
     ):
-        url = url.strip()
-        image_field_name = image_field_name.strip()
+        api_url = api_url.strip()
+        api_key = api_key.strip()
+        device_id = device_id.strip()
         filename_prefix_override = filename_prefix_override.strip()
 
-        if not url:
-            raise ValueError("url is empty")
-        if not image_field_name:
-            raise ValueError("image_field_name is empty")
+        if not api_url:
+            raise ValueError("api_url is empty")
+        if not api_key:
+            raise ValueError("api_key is empty")
+        if not device_id:
+            raise ValueError("device_id is empty")
 
         headers = {
-            str(key): str(value)
-            for key, value in parse_json_object(
-                headers_json,
-                "headers_json",
-            ).items()
-        }
-        form_fields = {
-            str(key): str(value)
-            for key, value in parse_json_object(
-                form_fields_json,
-                "form_fields_json",
-            ).items()
+            "Accept": "application/json",
+            "x-api-key": api_key,
         }
 
         responses = []
@@ -434,12 +417,25 @@ class PostWebPApi:
             if filename_prefix_override:
                 filename = f"{filename_prefix_override}_{index + 1}.webp"
 
+            timestamp = (
+                datetime.now(timezone.utc)
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z")
+            )
+            device_asset_id = f"{device_id}:{uuid4()}:{filename}"
+
             response = requests.post(
-                url,
+                api_url,
                 headers=headers,
-                data=form_fields,
+                data={
+                    "deviceAssetId": device_asset_id,
+                    "deviceId": device_id,
+                    "fileCreatedAt": timestamp,
+                    "fileModifiedAt": timestamp,
+                    "isFavorite": str(is_favorite).lower(),
+                },
                 files={
-                    image_field_name: (
+                    "assetData": (
                         filename,
                         image_bytes,
                         "image/webp",
@@ -451,7 +447,8 @@ class PostWebPApi:
             body = response.text
             if not response.ok:
                 raise RuntimeError(
-                    f"POST request failed ({response.status_code}): {body}"
+                    f"Immich asset upload failed "
+                    f"({response.status_code}): {body}"
                 )
 
             responses.append(body)
