@@ -468,5 +468,5 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "YeolImageToWebP": "Image to WEBP",
     "YeolSendTelegramWebP": "Send WEBP to Telegram",
-    "YeolPostWebPApi": "POST WEBP API",
+    "YeolPostWebPApi": "POST WEBP to Immich",
 }
