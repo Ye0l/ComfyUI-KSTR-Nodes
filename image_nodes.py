@@ -3,9 +3,9 @@ import io
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
-from xml.sax.saxutils import escape
 
 import numpy as np
+import piexif
 import requests
 from PIL import Image
 
@@ -41,20 +41,19 @@ def parse_json_object(raw: str, name: str) -> dict:
     return value
 
 
-def build_xmp_packet(metadata: dict) -> bytes:
-    json_text = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
-    escaped_json = escape(json_text)
+def build_exif_bytes(metadata: dict) -> bytes:
+    # Mirrors ComfyUI's own webp/jpeg metadata convention (see
+    # comfy_extras/nodes_images.py) so images dropped back into ComfyUI can
+    # restore the workflow: each key is stored as an ASCII 0th-IFD entry
+    # formatted as "key:json_value", decreasing from ImageIFD.Make.
+    zeroth_ifd = {}
+    tag = piexif.ImageIFD.Make
+    for key, value in metadata.items():
+        json_value = json.dumps(value, separators=(",", ":"))
+        zeroth_ifd[tag] = f"{key}:{json_value}"
+        tag -= 1
 
-    xmp = f"""<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description xmlns:comfy="https://yeol.dev/ns/comfyui/1.0/">
-      <comfy:metadata>{escaped_json}</comfy:metadata>
-    </rdf:Description>
-  </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>"""
-    return xmp.encode("utf-8")
+    return piexif.dump({"0th": zeroth_ifd})
 
 
 def encode_webp(
@@ -75,7 +74,7 @@ def encode_webp(
     }
 
     if metadata:
-        save_kwargs["xmp"] = build_xmp_packet(metadata)
+        save_kwargs["exif"] = build_exif_bytes(metadata)
 
     image.save(buffer, **save_kwargs)
     return buffer.getvalue()
@@ -128,11 +127,12 @@ def build_metadata(
     metadata = {}
     custom_metadata = parse_json_object(metadata_json, "metadata_json")
 
+    if include_workflow and extra_pnginfo is not None:
+        for key, value in extra_pnginfo.items():
+            metadata[key] = value
+
     if include_prompt and prompt is not None:
         metadata["prompt"] = prompt
-
-    if include_workflow and extra_pnginfo is not None:
-        metadata["extra_pnginfo"] = extra_pnginfo
 
     if custom_metadata:
         metadata["custom"] = custom_metadata
