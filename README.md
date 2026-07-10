@@ -84,6 +84,8 @@ Image to WEBP
 
 출력된 `WEBP`는 아래 Telegram / Immich 노드에 바로 연결하면 됩니다.
 
+`embed_metadata`가 켜져 있으면 `prompt` / `workflow` / 커스텀 메타데이터를 ComfyUI가 PNG에 쓰는 것과 동일한 방식(EXIF)으로 WEBP에 심습니다. Immich에 업로드한 뒤 원본을 다시 받아 ComfyUI에 드래그해도 워크플로우가 복원됩니다.
+
 ### Send WEBP to Telegram
 
 연결:
