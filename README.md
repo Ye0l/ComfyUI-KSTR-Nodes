@@ -8,29 +8,35 @@ ComfyUI에서 쓰는 간단한 유틸 노드 모음입니다.
 
 ### 로컬 프롬프트 모델 사용
 
-`Korean Image Prompt (EXAONE)` 노드는 별도 LLM 의존성이 필요합니다.
+`Korean Image Prompt (Local LLM)` 노드는 별도 LLM 의존성이 필요합니다.
 
 ```bash
 cd custom_nodes/ComfyUI-KSTR-Nodes
 pip install -r requirements-llm.txt
 ```
 
-모델은 `KSTR_PROMPT_MODEL` 환경변수로 지정합니다. Hugging Face 모델 ID와 로컬 디렉터리를 모두 사용할 수 있습니다.
+기본 모델은 Apache-2.0 라이선스의 `Qwen/Qwen3-1.7B`입니다. 환경변수를 지정하지 않으면 최초 실행 시 Hugging Face에서 이 모델을 내려받습니다.
+
+모델은 `KSTR_PROMPT_MODEL` 환경변수로 바꿀 수 있습니다. Hugging Face 모델 ID와 로컬 디렉터리를 모두 사용할 수 있습니다.
 
 ```bash
-export KSTR_PROMPT_MODEL=/models/EXAONE-3.5-2.4B-Instruct
+export KSTR_PROMPT_MODEL=/models/your-prompt-model
 ```
 
-환경변수가 없으면 `LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct`를 사용합니다. 최초 실행 시 Hugging Face에서 모델을 내려받을 수 있습니다.
+EXAONE을 사용하려면 사용자가 직접 지정할 수 있습니다.
 
-EXAONE 모델은 코드와 별개의 라이선스를 사용하므로 모델 사용 전 [EXAONE AI Model License](https://huggingface.co/LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct)를 확인하세요.
+```bash
+export KSTR_PROMPT_MODEL=LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+```
+
+EXAONE은 코드와 별개의 비상업용 모델 라이선스를 사용하며 출력물 사용에도 제한이 있으므로, 사용 전에 해당 모델 라이선스를 직접 확인해야 합니다.
 
 ## 노드 목록
 
 | Node | 용도 | 핵심 입력 | 출력 |
 | --- | --- | --- | --- |
 | Normalize Comma Prompt | 쉼표 기준 프롬프트 공백 정리 | `prompt` | 정리된 `STRING` |
-| Korean Image Prompt (EXAONE) | 한국어 자연어를 로컬 EXAONE으로 이미지 프롬프트화 | `description`, `prompt_format`, `creativity` | positive / negative `STRING` |
+| Korean Image Prompt (Local LLM) | 한국어 자연어를 로컬 소형 LLM으로 이미지 프롬프트화 | `description`, `prompt_format`, `creativity` | positive / negative `STRING` |
 | LoRA Ratio Stacker | `LORA_STACK` 비율을 지정 합계 강도로 재분배 | `lora_stack`, `total_strength`, `ratio_source` | 재계산된 `LORA_STACK`, `applied_ratios` |
 | Image to WEBP | `IMAGE` 배치를 WEBP로 변환 | `image`, `quality`, `method`, `lossless`, 메타데이터 옵션 | `WEBP` |
 | Send WEBP to Telegram | WEBP를 Telegram Bot API로 전송 | `webp`, `bot_token`, `chat_id`, `caption`, `send_as_document` | 원본 `WEBP`, 응답 문자열 |
@@ -52,7 +58,7 @@ masterpiece, 1girl , blue hair,  smile
 masterpiece, 1girl, blue hair, smile
 ```
 
-### Korean Image Prompt (EXAONE)
+### Korean Image Prompt (Local LLM)
 
 입력:
 
