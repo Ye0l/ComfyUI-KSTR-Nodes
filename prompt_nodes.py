@@ -20,7 +20,12 @@ class NormalizeCommaPrompt:
     CATEGORY = "Yeol/Prompt"
 
     def normalize(self, prompt: str):
-        normalized_parts = (part.strip() for part in prompt.split(","))
+        uncommented_prompt = "\n".join(
+            line for line in prompt.splitlines() if not line.lstrip().startswith("//")
+        )
+        normalized_parts = (
+            part.strip() for part in uncommented_prompt.split(",") if part.strip()
+        )
         return (", ".join(normalized_parts),)
 
 
