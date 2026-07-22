@@ -203,30 +203,171 @@ def _a1111_embedding(clip, tokenized, stream_key):
     return weighted, base_info
 
 
-def _native_embedding_fallback(clip, tokenized, stream_key, interpretation):
-    tokens, weights, _ = _stream_components(tokenized[stream_key])
+def _mask_indices(tokens, indices, mask_token):
+    row_length = len(tokens[0])
+    selected = set(indices)
+    return [
+        [
+            mask_token if row_index * row_length + token_index in selected else token
+            for token_index, token in enumerate(row)
+        ]
+        for row_index, row in enumerate(tokens)
+    ]
+
+
+def _batched_encode_stream(clip, tokenized, stream_key, streams, section_count):
+    outputs = []
+    for offset in range(0, len(streams), 32):
+        batch = streams[offset : offset + 32]
+        repeated = {key: value for key, value in tokenized.items()}
+        repeated[stream_key] = batch
+        multiplier = max(1, len(batch) // section_count)
+        for key, value in list(repeated.items()):
+            if key != stream_key:
+                repeated[key] = list(value) * multiplier
+        info = clip.encode_from_tokens(repeated, return_pooled=True, return_dict=True)
+        outputs.append(info["cond"].reshape(len(batch), len(batch[0]), -1))
+    return torch.cat(outputs, dim=0)
+
+
+def _down_weight_embedding(
+    clip,
+    tokenized,
+    stream_key,
+    tokens,
+    weights,
+    base,
+    mask_token=(266, 1.0),
+):
+    flat_weights = [weight for row in weights for weight in row]
+    unique_weights = sorted(set(flat_weights))
+    if not any(weight < 1.0 for weight in unique_weights):
+        return base
+
+    inverse = [unique_weights.index(weight) for weight in flat_weights]
+    masked_current = _tokens_unweighted(tokens)
+    masked_streams = []
+
+    for weight_index, weight in enumerate(unique_weights):
+        if weight >= 1.0:
+            continue
+        indices = [
+            index for index, inverse_index in enumerate(inverse)
+            if inverse_index == weight_index
+        ]
+        masked_current = _mask_indices(masked_current, indices, mask_token)
+        masked_streams.extend(masked_current)
+
+    encoded = _batched_encode_stream(
+        clip,
+        tokenized,
+        stream_key,
+        masked_streams,
+        len(tokens),
+    )
+    encoded = torch.cat([base, encoded], dim=0)
+    reduced = [weight for weight in unique_weights if weight <= 1.0]
+    mix = [reduced[0]] + [right - left for left, right in zip(reduced, reduced[1:])]
+    mix_tensor = torch.tensor(mix, dtype=encoded.dtype, device=encoded.device).reshape(-1, 1, 1)
+    return (mix_tensor * encoded).sum(dim=0, keepdim=True)
+
+
+def _up_weight_embedding(
+    clip,
+    tokenized,
+    stream_key,
+    tokens,
+    weights,
+    word_ids,
+    base,
+    mask_token=(266, 1.0),
+):
+    changed = {}
+    for word_row, weight_row in zip(word_ids, weights):
+        for word_id, weight in zip(word_row, weight_row):
+            if word_id in (None, 0) or weight <= 1.0 or word_id in changed:
+                continue
+            changed[word_id] = weight
+
+    if not changed:
+        return torch.zeros_like(base)
+
+    masked_streams = []
+    masks = []
+    for word_id in changed:
+        masked = []
+        mask = []
+        for token_row, word_row in zip(tokens, word_ids):
+            masked.append([
+                mask_token if current_word_id == word_id else (token, 1.0)
+                for token, current_word_id in zip(token_row, word_row)
+            ])
+            mask.extend(current_word_id == word_id for current_word_id in word_row)
+        masked_streams.extend(masked)
+        masks.append(mask)
+
+    encoded = _batched_encode_stream(
+        clip,
+        tokenized,
+        stream_key,
+        masked_streams,
+        len(tokens),
+    )
+    differences = base.expand(encoded.shape) - encoded
+
+    result = torch.zeros_like(base)
+    for index, (word_id, weight) in enumerate(changed.items()):
+        mask_tensor = torch.tensor(
+            masks[index], dtype=base.dtype, device=base.device
+        ).reshape(1, -1, 1)
+        result += differences[index : index + 1] * mask_tensor * (weight - 1.0)
+    return result
+
+
+def _advanced_embedding(clip, tokenized, stream_key, interpretation):
+    tokens, weights, word_ids = _stream_components(tokenized[stream_key])
+    unweighted = _tokens_unweighted(tokens)
+    base, base_info = _encode_replaced_stream(
+        clip, tokenized, stream_key, unweighted
+    )
+
+    if interpretation == "compel":
+        positive_weights = [
+            [weight if weight >= 1.0 else 1.0 for weight in row]
+            for row in weights
+        ]
+        positive, info = _encode_replaced_stream(
+            clip,
+            tokenized,
+            stream_key,
+            _tokens_with_weights(tokens, positive_weights),
+        )
+        return _down_weight_embedding(
+            clip, tokenized, stream_key, tokens, weights, positive
+        ), info
+
+    if interpretation == "comfy++":
+        down = _down_weight_embedding(
+            clip, tokenized, stream_key, tokens, weights, base
+        )
+        up = _up_weight_embedding(
+            clip, tokenized, stream_key, tokens, weights, word_ids, base
+        )
+        return down + up, base_info
 
     if interpretation == "down_weight":
         flat = [weight for row in weights for weight in row]
         maximum = max(flat) if flat else 1.0
-        if maximum > 1.0:
-            weights = [[weight / maximum for weight in row] for row in weights]
-    elif interpretation == "compel":
-        # Preserve positive weights and let ComfyUI's native encoder process
-        # negative weights. This keeps the mode usable on modern encoders that
-        # do not expose SD1-style mask tokens.
-        weights = [[weight if weight >= 1.0 else weight for weight in row] for row in weights]
-    elif interpretation == "comfy++":
-        # Native Comfy weighting is the safest generalized fallback for encoders
-        # without a stable, model-specific masking token.
-        pass
-    else:
-        raise ValueError(f"Unsupported weight interpretation: {interpretation!r}")
+        scaled = (
+            [[weight / maximum for weight in row] for row in weights]
+            if maximum > 1.0
+            else weights
+        )
+        return _down_weight_embedding(
+            clip, tokenized, stream_key, tokens, scaled, base
+        ), base_info
 
-    return _encode_replaced_stream(
-        clip, tokenized, stream_key, _tokens_with_weights(tokens, weights)
-    )
-
+    raise ValueError(f"Unsupported weight interpretation: {interpretation!r}")
 
 def _conditioning_from_info(cond, info):
     metadata = {
@@ -299,7 +440,7 @@ class CLIPTextEncodeAdvanced:
         if weight_interpretation == "A1111":
             cond, info = _a1111_embedding(clip, normalized, stream_key)
         else:
-            cond, info = _native_embedding_fallback(
+            cond, info = _advanced_embedding(
                 clip, normalized, stream_key, weight_interpretation
             )
         return (_conditioning_from_info(cond, info),)
